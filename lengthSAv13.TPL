@@ -6,12 +6,12 @@
 //(3) considering age-specific M instead of just M  
 //
 //data file name: mackereldata.DAT
-//Author: Saang-Yoon Hyun, Kyuhan Kim, Jinwoo Gim, Minkyu Bahk and Doyul Kim as of April 21; 
+//Author: Saang-Yoon Hyun, Kyuhan Kim, Jinwoo Gim, Minkyu Bahk and Doyul Kim as of 6 May, 2020
 
 DATA_SECTION
   init_int nages; 		// 6
   init_int nlengths;  	// 42 classes
-  init_int nyrs; 		// 22 years
+  init_int nyrs; 		// 23 years
 
   init_matrix yieldcpue(1,nyrs,1,3);
   vector years(1,nyrs); 
@@ -59,9 +59,9 @@ DATA_SECTION
   init_number powerML;  //power (=beta*b1) in M = par*L^power
                         //ad hoc value = 3.425 * 0.305, where 3.425 from JW, and 0.305 from Lorenzen (1996);
                          
-  //init_vector M(1,nlengths); // length-specific M 
   init_number lambda1; // lambda in the objective function
   init_number lambda2; // lambda in the objective function
+  init_number lambda3; // lambda in the objective function
   
   init_number logLinf;
   number Linf;
@@ -77,31 +77,45 @@ DATA_SECTION
   ivector SamSize(1,nyrsLD);   //annual sample size for the length data;    
   //init_number sig2_yield;
   
-  !!cout<<"choiceSR: "<<choiceSR<<endl; 
-
+  init_number sig2_yield;
   
+  init_vector range_F_devs(1,2); 
+  number low_F_devs;
+  number up_F_devs; 
+  !!low_F_devs=range_F_devs(1); 
+  !!up_F_devs=range_F_devs(2); 
+  
+  !!cout<<"lambda3 "<<lambda3<<endl; 
+  !!cout<<"logLinf: "<<logLinf<<endl; 
+  !!cout<<"choiceSR: "<<choiceSR<<endl; 
+  !!cout<<"low_F_devs, up_F_devs: "<<low_F_devs<<" "<<up_F_devs<<endl;
+
 PARAMETER_SECTION
-  init_number logF1(1);                        //log(F in the first time, i.e., first year);
-  init_bounded_vector F_devs(1,nyrs-1,lowFdev,upFedv,1);         //random walk deviations for annual fishing mortality in years after 1st year; 
-  init_bounded_vector logRec(1,indexMinyrLD,10.0,28.0,2); //age-1 N in 1996 ~ 2000; 
-  init_bounded_number logkappa(-3.0,-0.80,3);
-  init_bounded_number logL50(3.0,4.0,4);     //selectivity 
-  init_bounded_number gamma(0.05,1.5,5);     //selectivity
-  init_bounded_number sigmaL(0.0,3.0,6);     //the uncertainty in the L_{a+1} equation
-  init_number log_parML(7);     //the parameter in M = par * L^(3.425*0.305);
+  init_bounded_number logF1(-3.0,0.0,1);                        //log(F in the first time, i.e., first year);
+  init_bounded_vector F_devs(1,nyrs-1,low_F_devs,up_F_devs,1);         //random walk deviations for annual fishing mortality in years after 1st year; 
+  init_bounded_vector logRec(1,indexMinyrLD,5.0,28.0,3); //age-1 N in 1996 ~ 2000; 
+  init_bounded_number logkappa(-3.0,-0.80,4);
+  init_bounded_number logL50(3.0,4.0,5);     //selectivity 
+  init_bounded_number gamma(0.05,1.5,6);     //selectivity
+  init_bounded_number sigmaL(0.0,3.0,7);     //the uncertainty in the L_{a+1} equation
+  init_number log_parML(1);     //the parameter in M = par * L^(3.425*0.305);
   
   //Under B-H, Recruits_{t+1} = Spawners_t/(a+b*Spawners_t); 
   //Under Ricker, Recruits_{t+1} = a*Spawners_t*exp(-b*Spawners_t); 
   init_bounded_number logaSR(0.0,10.0,2);    //parameter a in the stock-recruitment model 
   init_bounded_number logbSR(-30.0,0.0,2);     //parameter b in the stock-recruitment model 
-                                            
-  vector M(1,nyrs);  
+  
+  //!!cout<<"logbSR: "<<logbSR<<endl;      
+  //!!exit(44);                                    
+  
+  vector M(1,nlengths);  
   vector F_t(1,nyrs);      //instantaneous fishing mortality by year 
                           //previous notation: F_yr(1,nyrs); 
   vector logFt(1,nyrs);   //log(Ft);
+  number parML;
   
   number q;
-  vector temelems(indexMinyrLD,nyrs); 
+  //vector temelems(indexMinyrLD,nyrs); 
   
   vector Recruits(1,nyrs+1); 
   number kappa; 
@@ -148,11 +162,14 @@ PARAMETER_SECTION
  
   number logmult; //log(multinomial); 
   vector elem_obj2(indexMinyrLD,nyrs);  //elements in part 2 of the objective function;
+  vector elem_obj3(indexMinyrLD,nyrs);
+  vector temelems(indexMinyrLD,nyrs);
   
-  number lognormal;  //log(normal); 
+  number lognormal1;  //log(normal); 
+  number lognormal2;  //log(normal); 
+  number sig2_logCPUE;
   number maxloglike; // for calculation of AIC
   number aic; 
-  //number sig2_yield;
   
   objective_function_value obj;
   
@@ -182,14 +199,14 @@ PROCEDURE_SECTION
   
   //instantaneous natural mortality by length class
   for(int xind=1; xind<=nlengths; xind++) 
-      M(xind)=parML*(pow(x(xind),powerML); 
+      M(xind)=parML*(pow(x(xind),-1.0*powerML)); 
   
   //instantaneous fishing mortality by time, i.e., year;
-  log_F(1)=log_F1;                 
-  F_t(1)=mfexp(log_F(1));
+  logFt(1)=logF1;                 
+  F_t(1)=mfexp(logFt(1));
   for(int t=2; t<=nyrs; t++)  {
-     log_F(t)=log_F(t-1)+F_devs(t-1); 
-     F_t(t)=mfexp(log_F(t)); 
+     logFt(t)=logFt(t-1)+F_devs(t-1); 
+     F_t(t)=mfexp(logFt(t)); 
   };    
   
   //
@@ -399,6 +416,8 @@ PROCEDURE_SECTION
   maxloglike=0.0; 
   maxloglike+=logmult; 
   
+  cout<<"obj_1: "<<obj<<endl;
+  
   //part 2 of the objective function: lognormal for yield data
   for(int m=indexMinyrLD;m<=nyrs;m++) 
      elem_obj2(m)=square( log(yield(m))-log(Yieldhat(m)/1000)+sig2_yield/(2.0*square(Yieldhat(m)/1000))  );  //in MT 
@@ -412,14 +431,14 @@ PROCEDURE_SECTION
   lognormal1=(-0.5*(nyrs-indexMinyrLD+1)*log(2*M_PI)-0.5*(nyrs-indexMinyrLD+1)*log(sig2_yield)-sum(elem_obj2)/(2.0*sig2_yield));
   
   maxloglike+=lognormal1;  
-  
+  cout<<"obj_2: "<<obj<<endl;
   
   //part 3 of the objective function: lognormal for cpue data
   //log(CPUE) ~ normal (log(q*Bt), sig2_cpue); 
   for(int m=indexMinyrLD;m<=nyrs;m++) 
       temelems(m) = log(CPUE(m))-log(B(m));
   
-  q=mfexp(sum(temelmens)/(nyrs-indexMindyrLD+1));
+  q=mfexp(sum(temelems)/(nyrs-indexMinyrLD+1));
           
   for(int m=indexMinyrLD;m<=nyrs;m++) 
       elem_obj3(m)=square(log(CPUE(m))-log(q)-log(B(m)));      
@@ -427,7 +446,7 @@ PROCEDURE_SECTION
   sig2_logCPUE=sum(elem_obj3)/(nyrs-indexMinyrLD+1); 
   
   obj+=lambda3*(0.5*(nyrs-indexMinyrLD+1)*log(sig2_logCPUE)+sum(elem_obj3)/(2.0*sig2_logCPUE));  //lamda2*(the negative normal loglikelihood);
-
+   cout<<"obj3: "<<obj<<endl;
   //cout<<"elem_obj3: "<<endl; 
   //cout<<elem_obj3<<endl; 
   
@@ -437,14 +456,14 @@ PROCEDURE_SECTION
   maxloglike+=lognormal2;  
 
   /////////////////////////
-  aic=-2.0*maxloglike+2.0*(nyrs+5);   
+  aic=-2.0*maxloglike+2.0*(36);   
   
  
   
 REPORT_SECTION
   report<<"Yr Recruits Fyr Yield Yieldhat"<<endl; 
   for(int i=1;i<=nyrs;i++)  
-     report<<years(i)<<" "<<Recruits(i)<<" "<<F_yr(i)<<" "<<yield(i)<<" "<<Yieldhat(i)/1000<<endl; 
+     report<<years(i)<<" "<<Recruits(i)<<" "<<F_t(i)<<" "<<yield(i)<<" "<<Yieldhat(i)/1000<<endl; 
      
   report<<"yrs Pop B.in.kg ExploitB"<<endl;   
   for(int i=1;i<=nyrs;i++)     
@@ -459,10 +478,7 @@ REPORT_SECTION
   for(int i=1;i<=nyrs;i++)
      report<<years(i)<<" "<<trans(Spawners)(i)<<endl; 
   report<<"2018"<<" "<<trans(Spawners)(nyrs+1)<<endl; 
-  
-  cout<<"Hi"<<endl; 
-  //exit(13);
-     
+   
   report<<"lengthfq: "<<lengthfq<<endl; 
   report<<"Catchhat: "<<Catch<<endl; 
   report<<"max.grad: "<<objective_function_value::gmax<<endl; 
@@ -472,10 +488,11 @@ REPORT_SECTION
   report<<"Mu(1,nlengths): "<<Mu<<endl;
 
   report<<"SS(1,nages): "<<SS<<endl;
-  report<<"M, sigmaL, and aic: "<<M<<" "<<sigmaL<<" "<<aic<<endl; 
-  
+  report<<"M: "<<M<<endl; 
+   
+  report<<"sigmaL, and aic: "<<sigmaL<<" "<<aic<<endl; 
   report<<"sig2_yield: "<<sig2_yield<<endl; 
-  
+  report<<"obj: "<<obj<<endl; 
   //exit(13); 
   
 RUNTIME_SECTION
@@ -495,5 +512,6 @@ GLOBALS_SECTION
   #include <stdio.h>
   #include <stddef.h>
   #include <stdlib.h>
+
 
 
